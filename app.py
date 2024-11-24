@@ -66,8 +66,10 @@ async def admin(access_token: str = Depends(oauth2_scheme)):
     if not token or "access_token" not in token:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    # Check for the Admin role
-    check_user_role(token, "Admin")
+    # Decode the token to check for roles
+    decoded_token = msal_app._deserialize_token(token['access_token'])
+    check_user_role(decoded_token, "Admin")
+    
     return {"message": "Welcome Admin!"}
 
 @app.get("/user")
@@ -77,6 +79,8 @@ async def user(access_token: str = Depends(oauth2_scheme)):
     if not token or "access_token" not in token:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    # Check for the User role
-    check_user_role(token, "User")
+    # Decode the token to check for roles
+    decoded_token = msal_app._deserialize_token(token['access_token'])
+    check_user_role(decoded_token, "User")
+    
     return {"message": "Welcome User!"}
