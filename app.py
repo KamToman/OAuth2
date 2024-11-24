@@ -3,28 +3,30 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from msal import ConfidentialClientApplication
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 app = FastAPI()
 
+# Fetch environment variables directly from Azure
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
-AUTHORITY = f"https://login.microsoftonline.com/92490e38-49cf-409e-97cc-9de5194809ba"
-SCOPES = ["User.Read", "api://{CLIENT_ID}/access_as_user"]
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+SCOPES = ["User.Read", f"api://{CLIENT_ID}/access_as_user"]
 
-# Konfiguracja MSAL
+# Ensure the environment variables are set
+if not all([CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI]):
+    raise ValueError("One or more environment variables are missing. Please check your Azure configuration.")
+
+# Configure MSAL
 msal_app = ConfidentialClientApplication(
     CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
 )
 
-# Zabezpieczenie dostępu do tokenu
+# OAuth2 token bearer security
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-# Funkcja sprawdzająca role użytkownika
+# Function to check user roles
 def check_user_role(token: dict, required_role: str):
     roles = token.get("roles", [])
     if required_role not in roles:
@@ -36,15 +38,18 @@ async def root():
 
 @app.get("/login")
 async def login():
+    # Generate the authorization URL
     auth_url = msal_app.get_authorization_request_url(SCOPES, redirect_uri=REDIRECT_URI)
     return RedirectResponse(auth_url)
 
 @app.get("/callback")
 async def callback(request: Request):
+    # Extract the authorization code from the callback
     code = request.query_params.get("code")
     if not code:
         raise HTTPException(status_code=400, detail="Code not found in callback request")
 
+    # Exchange the authorization code for an access token
     token_response = msal_app.acquire_token_by_authorization_code(
         code, scopes=SCOPES, redirect_uri=REDIRECT_URI
     )
@@ -56,18 +61,22 @@ async def callback(request: Request):
 
 @app.get("/admin")
 async def admin(access_token: str = Depends(oauth2_scheme)):
+    # Use MSAL to acquire the token silently
     token = msal_app.acquire_token_silent(SCOPES, account=None)
     if not token or "access_token" not in token:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+    # Check for the Admin role
     check_user_role(token, "Admin")
     return {"message": "Welcome Admin!"}
 
 @app.get("/user")
 async def user(access_token: str = Depends(oauth2_scheme)):
+    # Use MSAL to acquire the token silently
     token = msal_app.acquire_token_silent(SCOPES, account=None)
     if not token or "access_token" not in token:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+    # Check for the User role
     check_user_role(token, "User")
     return {"message": "Welcome User!"}
