@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import RedirectResponse
+from fastapi.security import OAuth2PasswordBearer
 from msal import ConfidentialClientApplication
 import os
 
@@ -13,6 +14,7 @@ REDIRECT_URI = os.getenv("REDIRECT_URI")
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPES = ["User.Read", f"api://{CLIENT_ID}/access_as_user"]
 
+
 # Ensure the environment variables are set
 if not all([CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI]):
     raise ValueError("One or more environment variables are missing. Please check your Azure configuration.")
@@ -25,10 +27,15 @@ msal_app = ConfidentialClientApplication(
 # OAuth2 token bearer security
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-@app.get("/logout")
-async def logout():
-    # Redirect user to the login page to log in again
-    return RedirectResponse(url="/login")
+# Function to check user roles
+def check_user_role(token: dict, required_role: str):
+    roles = token.get("roles", [])
+    if required_role not in roles:
+        raise HTTPException(status_code=403, detail="Access forbidden")
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to OAuth2 secured app!"}
 
 @app.get("/login")
 async def login():
@@ -51,6 +58,38 @@ async def callback(request: Request):
     if "error" in token_response:
         raise HTTPException(status_code=400, detail=token_response["error_description"])
 
-    # Store the access token (this could be in the session, database, or JWT)
-    access_token = token_response["access_token"]
-    return {"access_token": access_token}
+    return {"access_token": token_response["access_token"], "id_token": token_response.get("id_token", None)}
+
+@app.get("/admin")
+async def admin(access_token: str = Depends(oauth2_scheme)):
+    # Use MSAL to acquire the token silently
+    token = msal_app.acquire_token_silent(SCOPES, account=None)
+    if not token or "access_token" not in token:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Decode the token to check for roles
+    decoded_token = msal_app._deserialize_token(token['access_token'])
+    check_user_role(decoded_token, "Admin")
+    
+    return {"message": "Welcome Admin!"}
+
+@app.get("/user")
+async def user(access_token: str = Depends(oauth2_scheme)):
+    # Use MSAL to acquire the token silently
+    token = msal_app.acquire_token_silent(SCOPES, account=None)
+    if not token or "access_token" not in token:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Decode the token to check for roles
+    decoded_token = msal_app._deserialize_token(token['access_token'])
+    check_user_role(decoded_token, "User")
+    
+    return {"message": "Welcome User!"}
+
+@app.get("/logout")
+async def logout(request: Request):
+    # Clear the token from the session (or headers if using a different method)
+    request.session.clear()  # if you are using session management, else remove the token from headers
+
+    # Redirect to the login page for re-authentication
+    return RedirectResponse(url="/login")
